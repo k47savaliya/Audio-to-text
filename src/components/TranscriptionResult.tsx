@@ -122,7 +122,7 @@ export default function TranscriptionResult({ data, onNewTranscription }: Transc
             value: 'Complete',
             gradient: 'from-green-400 to-emerald-400'
           }
-        ].map((stat, index) => (
+        ].map((stat) => (
           <div 
             key={stat.label}
             className="group bg-white/5 hover:bg-white/10 backdrop-blur-sm rounded-xl p-6 text-center transition-all duration-300 hover:scale-105 border border-white/10 hover:border-white/20 shadow-lg"

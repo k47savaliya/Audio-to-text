@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef } from 'react'
 
 interface TranscriptionData {
   transcript: string
@@ -17,7 +17,6 @@ export default function VideoUpload({ onTranscriptionComplete, isLoading, setIsL
   const [dragActive, setDragActive] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [currentStage, setCurrentStage] = useState('')
-  const [chunks, setChunks] = useState({ current: 0, total: 0 })
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleDrag = (e: React.DragEvent) => {

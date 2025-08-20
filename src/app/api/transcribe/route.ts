@@ -6,19 +6,22 @@ import path from 'path'
 import { tmpdir } from 'os'
 import { WaveFile } from 'wavefile'
 import ffmpeg from 'fluent-ffmpeg'
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
 
 // Configure ffmpeg path
-const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path
+const ffmpegPath = ffmpegInstaller.path
 ffmpeg.setFfmpegPath(ffmpegPath)
 
-let pipe: any = null
+let pipe: unknown = null
 
 async function getTranscriptionPipeline() {
   if (pipe === null) {
     // Use whisper-small for better accuracy than tiny
     pipe = await pipeline('automatic-speech-recognition', 'Xenova/whisper-small.en')
   }
-  return pipe
+  return pipe as {
+    (audio: Float32Array): Promise<{ text: string }>
+  }
 }
 
 // Function to extract audio from video using ffmpeg
@@ -35,7 +38,7 @@ async function extractAudioFromVideo(videoPath: string): Promise<string> {
         console.log('Audio extraction completed')
         resolve(audioPath)
       })
-      .on('error', (err: any) => {
+      .on('error', (err: Error) => {
         console.error('FFmpeg error:', err)
         reject(err)
       })
@@ -165,10 +168,11 @@ export async function POST(request: NextRequest) {
         transcript: fullTranscript.trim() || 'No transcription generated' 
       })
 
-    } catch (transcriptionError: any) {
+    } catch (transcriptionError: unknown) {
       console.error('Transcription error:', transcriptionError)
+      const errorMessage = transcriptionError instanceof Error ? transcriptionError.message : 'Unknown error'
       return NextResponse.json(
-        { error: 'Transcription failed', details: transcriptionError.message },
+        { error: 'Transcription failed', details: errorMessage },
         { status: 500 }
       )
     } finally {
@@ -183,10 +187,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('API error:', error)
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
     return NextResponse.json(
-      { error: 'Server error', details: error.message },
+      { error: 'Server error', details: errorMessage },
       { status: 500 }
     )
   }
