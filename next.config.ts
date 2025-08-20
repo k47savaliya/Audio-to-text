@@ -1,7 +1,17 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  serverExternalPackages: ['@xenova/transformers', '@ffmpeg-installer/ffmpeg', 'fluent-ffmpeg'],
+  experimental: {
+    turbo: {
+      rules: {
+        '*.wasm': {
+          loaders: ['file-loader'],
+          as: '*.wasm',
+        },
+      },
+    },
+  },
 };
 
 export default nextConfig;
