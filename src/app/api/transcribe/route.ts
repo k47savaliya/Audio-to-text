@@ -79,8 +79,8 @@ async function processAudioFile(filePath: string): Promise<Float32Array[]> {
     
     const fullAudio = new Float32Array(audioData as ArrayLike<number>)
     
-    // Split audio into chunks of 30 seconds (480,000 samples at 16kHz)
-    const chunkSize = 16000 * 30 // 30 seconds
+    // Split audio into chunks of 15 seconds (240,000 samples at 16kHz) - smaller chunks for faster processing
+    const chunkSize = 16000 * 15 // 15 seconds
     const chunks: Float32Array[] = []
     
     for (let i = 0; i < fullAudio.length; i += chunkSize) {
@@ -88,7 +88,7 @@ async function processAudioFile(filePath: string): Promise<Float32Array[]> {
       chunks.push(chunk)
     }
     
-    console.log(`Audio split into ${chunks.length} chunks`)
+    console.log(`Audio split into ${chunks.length} chunks (${chunkSize / 16000}s each)`)
     return chunks
   } catch (error) {
     console.error('Error processing audio file:', error)
@@ -99,6 +99,7 @@ async function processAudioFile(filePath: string): Promise<Float32Array[]> {
 export async function POST(request: NextRequest) {
   try {
     console.log('API called - parsing form data...')
+    
     const formData = await request.formData()
     console.log('Form data keys:', Array.from(formData.keys()))
     
@@ -115,13 +116,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Uploaded file is empty' }, { status: 400 })
     }
 
+    // Check file size limit (Vercel has limits)
+    const maxSize = 50 * 1024 * 1024 // 50MB limit
+    if (file.size > maxSize) {
+      console.log('File too large:', file.size)
+      return NextResponse.json({ 
+        error: 'File too large. Please upload a file smaller than 50MB.' 
+      }, { status: 400 })
+    }
+
     // Save uploaded file temporarily
     console.log('Saving file temporarily...')
     const bytes = await file.arrayBuffer()
     const buffer = Buffer.from(bytes)
     const tempFilePath = path.join(tmpdir(), `upload-${Date.now()}-${file.name}`)
-    fs.writeFileSync(tempFilePath, buffer)
-    console.log('File saved to:', tempFilePath)
+    
+    try {
+      fs.writeFileSync(tempFilePath, buffer)
+      console.log('File saved to:', tempFilePath)
+    } catch (writeError) {
+      console.error('Failed to write temporary file:', writeError)
+      return NextResponse.json({ 
+        error: 'Failed to save uploaded file. Please try again.' 
+      }, { status: 500 })
+    }
 
     let audioFilePath = tempFilePath
     let shouldCleanupAudio = false
@@ -134,31 +152,62 @@ export async function POST(request: NextRequest) {
 
       if (videoExtensions.includes(fileExtension || '')) {
         console.log('Video file detected, extracting audio...')
-        audioFilePath = await extractAudioFromVideo(tempFilePath)
-        shouldCleanupAudio = true
+        try {
+          audioFilePath = await extractAudioFromVideo(tempFilePath)
+          shouldCleanupAudio = true
+        } catch (ffmpegError) {
+          console.error('FFmpeg extraction failed:', ffmpegError)
+          return NextResponse.json({ 
+            error: 'Failed to extract audio from video. Please try uploading an audio file instead or ensure the video format is supported.' 
+          }, { status: 400 })
+        }
       } else if (!audioExtensions.includes(fileExtension || '')) {
-        throw new Error('Unsupported file format. Please upload a video or audio file.')
+        return NextResponse.json({ 
+          error: 'Unsupported file format. Please upload a video or audio file.' 
+        }, { status: 400 })
       }
 
       // Get transcription pipeline
       console.log('Loading transcription pipeline...')
-      const transcriber = await getTranscriptionPipeline()
-      console.log('Pipeline loaded, processing audio file...')
+      let transcriber
+      try {
+        transcriber = await getTranscriptionPipeline()
+        console.log('Pipeline loaded, processing audio file...')
+      } catch (pipelineError) {
+        console.error('Failed to load transcription pipeline:', pipelineError)
+        return NextResponse.json({ 
+          error: 'Failed to initialize AI transcription model. Please try again.' 
+        }, { status: 500 })
+      }
       
       // Process the audio file into chunks
-      const audioChunks = await processAudioFile(audioFilePath)
-      console.log('Audio processed, starting transcription...')
+      let audioChunks
+      try {
+        audioChunks = await processAudioFile(audioFilePath)
+        console.log('Audio processed, starting transcription...')
+      } catch (audioError) {
+        console.error('Audio processing failed:', audioError)
+        return NextResponse.json({ 
+          error: 'Failed to process audio file. Please ensure it is a valid audio/video file.' 
+        }, { status: 400 })
+      }
       
       // Transcribe each chunk and combine results
       let fullTranscript = ''
+      
       for (let i = 0; i < audioChunks.length; i++) {
         console.log(`Transcribing chunk ${i + 1}/${audioChunks.length}...`)
         const progress = Math.round(((i + 1) / audioChunks.length) * 100)
         console.log(`Progress: ${progress}%`)
         
-        const result = await transcriber(audioChunks[i])
-        if (result.text) {
-          fullTranscript += result.text + ' '
+        try {
+          const result = await transcriber(audioChunks[i])
+          if (result.text) {
+            fullTranscript += result.text + ' '
+          }
+        } catch (transcribeError) {
+          console.error(`Failed to transcribe chunk ${i + 1}:`, transcribeError)
+          fullTranscript += '[Error in transcription] '
         }
       }
       

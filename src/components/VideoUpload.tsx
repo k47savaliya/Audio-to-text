@@ -81,8 +81,20 @@ export default function VideoUpload({ onTranscriptionComplete, isLoading, setIsL
       clearInterval(uploadInterval)
 
       if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Transcription failed')
+        let errorMessage = 'Transcription failed'
+        try {
+          const contentType = response.headers.get('content-type')
+          if (contentType && contentType.includes('application/json')) {
+            const errorData = await response.json()
+            errorMessage = errorData.error || errorData.details || errorMessage
+          } else {
+            const textResponse = await response.text()
+            errorMessage = `Server error (${response.status}): ${textResponse.substring(0, 100)}`
+          }
+        } catch (parseError) {
+          errorMessage = `Server error (${response.status}): Unable to parse response`
+        }
+        throw new Error(errorMessage)
       }
 
       // Simulate processing stages
@@ -110,7 +122,17 @@ export default function VideoUpload({ onTranscriptionComplete, isLoading, setIsL
         setUploadProgress(Math.min(progress, 95))
       }, 500)
 
-      const result = await response.json()
+      let result
+      try {
+        const contentType = response.headers.get('content-type')
+        if (contentType && contentType.includes('application/json')) {
+          result = await response.json()
+        } else {
+          throw new Error('Invalid response format from server')
+        }
+      } catch (parseError) {
+        throw new Error('Failed to parse server response')
+      }
       
       clearInterval(transcribeInterval)
       setUploadProgress(100)
@@ -178,7 +200,21 @@ export default function VideoUpload({ onTranscriptionComplete, isLoading, setIsL
               {/* Center content */}
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="text-center">
-                  <div className="text-4xl mb-2">🤖</div>
+                  {/* AI Brain Processing Icon */}
+                  <div className="mb-2 relative">
+                    <svg className="w-12 h-12 text-cyan-400" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M21.59 11.59c-.23-.23-.6-.23-.83 0l-2.41 2.41c-.23.23-.23.6 0 .83s.6.23.83 0l2.41-2.41c.23-.23.23-.6 0-.83zm-4.24-4.24c-.23-.23-.6-.23-.83 0l-2.41 2.41c-.23.23-.23.6 0 .83s.6.23.83 0l2.41-2.41c.23-.23.23-.6 0-.83zm-8.7 8.7c-.23-.23-.6-.23-.83 0l-2.41 2.41c-.23.23-.23.6 0 .83s.6.23.83 0l2.41-2.41c.23-.23.23-.6 0-.83zm-4.24-4.24c-.23-.23-.6-.23-.83 0l-2.41 2.41c-.23.23-.23.6 0 .83s.6.23.83 0l2.41-2.41c.23-.23.23-.6 0-.83z"/>
+                      <circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" strokeWidth="2" className="animate-pulse"/>
+                      <circle cx="12" cy="12" r="2" className="animate-ping opacity-75"/>
+                    </svg>
+                    {/* Neural network connections */}
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="w-10 h-10 border border-purple-400/30 rounded-full animate-spin" style={{ animationDuration: '3s' }}></div>
+                    </div>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="w-6 h-6 border border-cyan-400/50 rounded-full animate-spin" style={{ animationDuration: '2s', animationDirection: 'reverse' }}></div>
+                    </div>
+                  </div>
                   <div className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-400">
                     {Math.round(uploadProgress)}%
                   </div>
