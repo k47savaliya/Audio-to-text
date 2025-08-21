@@ -1,10 +1,8 @@
 // app/api/transcribe/route.ts - App Router API format
 import { NextRequest, NextResponse } from 'next/server'
-import { pipeline } from '@xenova/transformers'
 import fs from 'fs'
 import path from 'path'
 import { tmpdir } from 'os'
-import { WaveFile } from 'wavefile'
 import ffmpeg from 'fluent-ffmpeg'
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
 
@@ -12,17 +10,8 @@ import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
 const ffmpegPath = ffmpegInstaller.path
 ffmpeg.setFfmpegPath(ffmpegPath)
 
-let pipe: unknown = null
-
-async function getTranscriptionPipeline() {
-  if (pipe === null) {
-    // Use whisper-small for better accuracy than tiny
-    pipe = await pipeline('automatic-speech-recognition', 'Xenova/whisper-small.en')
-  }
-  return pipe as {
-    (audio: Float32Array): Promise<{ text: string }>
-  }
-}
+// Modal endpoint URL
+const MODAL_ENDPOINT = 'https://dummmy0102--whisper-transcriber-fastapi-app.modal.run/transcribe'
 
 // Function to extract audio from video using ffmpeg
 async function extractAudioFromVideo(videoPath: string): Promise<string> {
@@ -46,53 +35,37 @@ async function extractAudioFromVideo(videoPath: string): Promise<string> {
   })
 }
 
-// Function to process audio file using wavefile with chunking for long audio
-async function processAudioFile(filePath: string): Promise<Float32Array[]> {
+// Function to send audio file to Modal endpoint
+async function transcribeWithModal(audioFilePath: string): Promise<string> {
   try {
     // Read the audio file
-    const buffer = fs.readFileSync(filePath)
+    const audioBuffer = fs.readFileSync(audioFilePath)
     
-    // Create WaveFile instance and process the audio
-    const wav = new WaveFile()
-    wav.fromBuffer(buffer)
+    // Create form data
+    const formData = new FormData()
+    const audioBlob = new Blob([audioBuffer], { type: 'audio/wav' })
+    formData.append('file', audioBlob, 'audio.wav')
     
-    // Convert to the format required by Whisper
-    wav.toBitDepth('32f') // Pipeline expects input as a Float32Array
-    wav.toSampleRate(16000) // Whisper expects audio with a sampling rate of 16000
+    console.log('Sending audio to Modal endpoint...')
     
-    let audioData = wav.getSamples()
+    // Send to Modal endpoint
+    const response = await fetch(MODAL_ENDPOINT, {
+      method: 'POST',
+      body: formData,
+    })
     
-    // Handle multi-channel audio by merging to mono
-    if (Array.isArray(audioData)) {
-      if (audioData.length > 1) {
-        const SCALING_FACTOR = Math.sqrt(2)
-        
-        // Merge channels (into first channel to save memory)
-        for (let i = 0; i < audioData[0].length; ++i) {
-          audioData[0][i] = SCALING_FACTOR * (audioData[0][i] + audioData[1][i]) / 2
-        }
-      }
-      
-      // Select first channel
-      audioData = audioData[0]
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`Modal API error: ${response.status} - ${errorText}`)
     }
     
-    const fullAudio = new Float32Array(audioData as ArrayLike<number>)
+    const result = await response.json()
+    console.log('Modal transcription completed')
     
-    // Split audio into chunks of 15 seconds (240,000 samples at 16kHz) - smaller chunks for faster processing
-    const chunkSize = 16000 * 15 // 15 seconds
-    const chunks: Float32Array[] = []
-    
-    for (let i = 0; i < fullAudio.length; i += chunkSize) {
-      const chunk = fullAudio.slice(i, i + chunkSize)
-      chunks.push(chunk)
-    }
-    
-    console.log(`Audio split into ${chunks.length} chunks (${chunkSize / 16000}s each)`)
-    return chunks
+    return result.transcription || 'No transcription received'
   } catch (error) {
-    console.error('Error processing audio file:', error)
-    throw new Error('Failed to process audio file. Please ensure it is a valid audio file.')
+    console.error('Modal transcription error:', error)
+    throw new Error(`Failed to transcribe with Modal: ${error instanceof Error ? error.message : 'Unknown error'}`)
   }
 }
 
@@ -168,53 +141,22 @@ export async function POST(request: NextRequest) {
       }
 
       // Get transcription pipeline
-      console.log('Loading transcription pipeline...')
-      let transcriber
+      console.log('Processing with Modal Whisper API...')
+      let transcript
       try {
-        transcriber = await getTranscriptionPipeline()
-        console.log('Pipeline loaded, processing audio file...')
-      } catch (pipelineError) {
-        console.error('Failed to load transcription pipeline:', pipelineError)
+        transcript = await transcribeWithModal(audioFilePath)
+        console.log('Modal transcription completed')
+      } catch (modalError) {
+        console.error('Failed to transcribe with Modal:', modalError)
         return NextResponse.json({ 
-          error: 'Failed to initialize AI transcription model. Please try again.' 
+          error: 'Failed to transcribe audio. Please try again.' 
         }, { status: 500 })
-      }
-      
-      // Process the audio file into chunks
-      let audioChunks
-      try {
-        audioChunks = await processAudioFile(audioFilePath)
-        console.log('Audio processed, starting transcription...')
-      } catch (audioError) {
-        console.error('Audio processing failed:', audioError)
-        return NextResponse.json({ 
-          error: 'Failed to process audio file. Please ensure it is a valid audio/video file.' 
-        }, { status: 400 })
-      }
-      
-      // Transcribe each chunk and combine results
-      let fullTranscript = ''
-      
-      for (let i = 0; i < audioChunks.length; i++) {
-        console.log(`Transcribing chunk ${i + 1}/${audioChunks.length}...`)
-        const progress = Math.round(((i + 1) / audioChunks.length) * 100)
-        console.log(`Progress: ${progress}%`)
-        
-        try {
-          const result = await transcriber(audioChunks[i])
-          if (result.text) {
-            fullTranscript += result.text + ' '
-          }
-        } catch (transcribeError) {
-          console.error(`Failed to transcribe chunk ${i + 1}:`, transcribeError)
-          fullTranscript += '[Error in transcription] '
-        }
       }
       
       console.log('Transcription completed')
       
       return NextResponse.json({ 
-        transcript: fullTranscript.trim() || 'No transcription generated' 
+        transcript: transcript || 'No transcription generated' 
       })
 
     } catch (transcriptionError: unknown) {
